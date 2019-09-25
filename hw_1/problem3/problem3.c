@@ -22,7 +22,7 @@ int fileError(int type, char * filename, int permission) {
 			break;
 	}
 	switch(permission) {
-		case O_WRONLY|O_CREAT:
+		case O_WRONLY|O_CREAT|O_TRUNC:
 			strcpy(perm, "write/create");
 			break;
 		case O_RDONLY:
@@ -54,9 +54,9 @@ int main (int argc, char **argv) {
     while ((c = getopt(argc, argv, "o:")) != -1) {
         switch(c) {
 		case 'o':
-			fdOutput = open(argv[optind-1], O_WRONLY|O_CREAT, 0666);
+			fdOutput = open(argv[optind-1], O_WRONLY|O_CREAT|O_TRUNC, 0666);
 			if (fdOutput == -1)
-			 	return fileError(0, argv[optind-1], O_WRONLY|O_CREAT);
+			 	return fileError(0, argv[optind-1], O_WRONLY|O_CREAT|O_TRUNC);
 			break;
 		case '?':
 			fprintf(stderr, "error: unknown argument");
@@ -65,7 +65,7 @@ int main (int argc, char **argv) {
 	}
     }
     // now read all the input files.
-    // test for case where no inputs are given
+    // for case where no inputs are given
     if (argc == optind) {
 	    optind--;
 	    noInput = 1;
@@ -79,18 +79,21 @@ int main (int argc, char **argv) {
 	if (*argv[i] == '-' || noInput) {
 		fdInput = 0;
 		noInput = 0;
-		filename = "<standard input>";
+		char name[17] =  "<standard input>";
+		filename = name;
 	}else{
 		fdInput = open(argv[i], O_RDONLY);
 		filename = argv[i];
 		if (fdInput == -1)
 			return fileError(0, filename, O_RDONLY);
 	}
-	do{
+	while(1){
 		bytesRead = read(fdInput, buff, 4096);
 		readCount++;
 		if (bytesRead == -1)
 			return fileError(1, filename, O_RDONLY);
+		else if (bytesRead == 0)
+			break;
 		bytesWritten = write(fdOutput, buff, bytesRead);
 		// deal with partial write
 		while(bytesWritten>0 && bytesRead>bytesWritten) {
@@ -104,7 +107,7 @@ int main (int argc, char **argv) {
 			binary = checkBinary(buff, bytesWritten);
 		if (bytesWritten == -1 || (fdInput!=0 && bytesWritten == 0))
 			return fileError(2, filename, O_WRONLY|O_CREAT);
-	} while (bytesRead==4096 || (fdInput==0 && bytesRead>0));
+	}
 	fprintf(stderr, "Concatenated File: %s,\n\t Total Bytes: %d,\n\t Read Calls: %d,\n\t Write Calls: %d \n",
 				filename,
 				totalBytes,
