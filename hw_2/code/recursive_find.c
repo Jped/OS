@@ -84,17 +84,19 @@ int printInfo(char * top_directory, int device_number, char * directory, int * o
 	int return_value = 0;
 	struct stat st;
 	char * full_path = fullPath(top_directory, directory, st);
-	char user_buffer[1024];
-	char group_buffer[1024];
 	int status = lstat(full_path, &st);
 	if (status == 0){
 		if (device_number != -1 && st.st_dev != device_number && options[1] == 1){
-			fprintf(stderr, "note: not corssing mount point at %s\n", full_path);
+			fprintf(stderr, "note: not crossing mount point at %s\n", full_path);
 		}else if (options[0] != 1 || checkTime(st.st_mtime, options[2])){
 			char permission_string[11];
+			char user_buffer[1024];
+			char group_buffer[1024];
 			char size_string[20];
 			char * time_string = asctime(gmtime(&st.st_mtime));
-			time_string[strlen(time_string)-1]  = '\0';
+			time_string[strlen(time_string) - 1] = '\0';
+			resolveUid(st.st_uid, user_buffer);
+			resolveGid(st.st_gid, group_buffer);
 			switch(st.st_mode & S_IFMT) {
 				case S_IFREG:
 					return_value = 0;
@@ -105,8 +107,6 @@ int printInfo(char * top_directory, int device_number, char * directory, int * o
 					permission_string[0] = 'd';
 					break;
 			}
-			resolveUid(st.st_uid, user_buffer);
-			resolveGid(st.st_gid, group_buffer);
 			printf("%ld\t%ld\t%s\t%ld\t%s\t%s\t%s\t%s\t%s",
 						st.st_ino,
 						st.st_blocks/2,
