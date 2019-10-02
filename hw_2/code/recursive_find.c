@@ -1,29 +1,30 @@
-#include <unistd.h>
 #include <dirent.h>
-#include <sys/stat.h>
+#include <errno.h>
+#include <grp.h>
+#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
 #include <string.h>
-#include <pwd.h>
-#include <grp.h>
+#include <sys/stat.h>
 #include <sys/sysmacros.h>
-#include <errno.h>
+#include <time.h>
+#include <unistd.h>
 
-char * resolveSize(struct stat st, char * str) {
+char * sizeOrDeviceToString(struct stat st, char * str) {
+	// max str size is 20
 	if (S_ISBLK(st.st_mode) || S_ISCHR(st.st_mode)){
-		sprintf(str, "%d, %d", major(st.st_dev), minor(st.st_dev));
+		snprintf(str, 20, "%d, %d", major(st.st_dev), minor(st.st_dev));
 	}else{
-		sprintf(str, "%ld", st.st_size);
+		snprintf(str, 20, "%ld", st.st_size);
 	}
 	return str;
 }
 
-char * fullPath(char * top_directory, char * directory, struct stat st) {
-	char * full_path = malloc(strlen(top_directory) + strlen(directory) + 1);
+char * fullPath(char * top_directory, char * directory) {
+	char * full_path = malloc(strlen(top_directory) + strlen(directory) + 2);
 	strcpy(full_path, top_directory);
-	strcpy(full_path + strlen(top_directory), directory);
-        *(full_path + strlen(top_directory) + strlen(directory)) = '\0';
+	full_path[strlen(top_directory)] = '/';
+	strncat(full_path + strlen(top_directory) + 1, directory, strlen(directory);
 	return full_path;
 }
 
@@ -46,24 +47,15 @@ int checkTime(time_t secs, int time_option) {
 	int time_diff = (int) (now - secs);
 	if(time_option > 0 && time_diff >= time_option)
 		return 1;
-	else if(time_option < 0 && time_diff < (-time_option))
+	if(time_option < 0 && time_diff < (-time_option))
 	       return 1;	
 	return 0;
 }	
 
-void printError(char * full_path, int action_num) { 
-	char action[15];
-	switch(action_num) { 
-		case 0: 
-			strcpy(action, "opening");
-			break;
-		case 1:
-			strcpy(action, "opening dir");
-			break;
-	}
+void printError(char * full_path, char * action) { 
 	fprintf(stderr, "error while %s  %s: %s\n", action, full_path, strerror(errno));		
-	
 }
+
 void resolveUid(uid_t uid, char * buffer) { 
 	struct passwd * pass = getpwuid(uid);
 	if (pass != NULL)
@@ -83,7 +75,7 @@ void resolveGid(gid_t gid, char * buffer){
 int printInfo(char * top_directory, int device_number, char * directory, int * options) {
 	int return_value = 0;
 	struct stat st;
-	char * full_path = fullPath(top_directory, directory, st);
+	char * full_path = fullPath(top_directory, directory);
 	int status = lstat(full_path, &st);
 	if (status == 0){
 		if (device_number != -1 && st.st_dev != device_number && options[1] == 1){
@@ -114,7 +106,7 @@ int printInfo(char * top_directory, int device_number, char * directory, int * o
 						st.st_nlink,
 						user_buffer,
 						group_buffer,
-						resolveSize(st, size_string),
+						sizeOrDeviceToString(st, size_string),
 						time_string,
 						full_path);
 			if ((st.st_mode & S_IFMT) == S_IFLNK) {
@@ -125,7 +117,7 @@ int printInfo(char * top_directory, int device_number, char * directory, int * o
 			printf("\n");
 		}
 	} else {
-		printError(full_path, 0);
+		printError(full_path, "opening");
 	}
 	free(full_path);
 	if (device_number == -1)
@@ -146,10 +138,7 @@ int recurseDirectory(char * top_directory, int device_number, int * options) {
 			if (strcmp(dir->d_name, "..") != 0 && strcmp(dir->d_name, ".") !=0){
 				type = printInfo(top_directory, device_number, dir->d_name, options);
 				if (type == 1) {
-					strcpy(top_directory + len_top_directory, dir->d_name);
-					temp = strlen(top_directory);
-					top_directory[temp] = '/';
-					top_directory[temp + 1] = '\0';
+					fullPath(top_directory, dir->d_name);
 					recurseDirectory(top_directory, device_number, options);	
 					top_directory[len_top_directory] = '\0';
 				}
@@ -157,7 +146,7 @@ int recurseDirectory(char * top_directory, int device_number, int * options) {
 		}
 		closedir(d);
 	} else {
-		printError(top_directory, 1);
+		printError(top_directory, "opening dir");
 	}
 	return 1;
 }
