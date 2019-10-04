@@ -20,11 +20,12 @@ char * sizeOrDeviceToString(struct stat st, char * str) {
 	return str;
 }
 
-char * fullPath(char * top_directory, char * directory) {
-	char * full_path = malloc(strlen(top_directory) + strlen(directory) + 2);
-	strcpy(full_path, top_directory);
-	full_path[strlen(top_directory)] = '/';
-	strncat(full_path + strlen(top_directory) + 1, directory, strlen(directory);
+char * fullPath(char * parent_directory, char * directory_element) {
+	char * full_path = malloc(strlen(parent_directory) + strlen(directory_element) + 2);
+	strcpy(full_path, parent_directory);
+	full_path[strlen(parent_directory)] = '/';
+	full_path[strlen(parent_directory)+1] = '\0';
+	strncat(full_path + strlen(parent_directory) + 1, directory_element, strlen(directory_element));
 	return full_path;
 }
 
@@ -72,82 +73,103 @@ void resolveGid(gid_t gid, char * buffer){
 		sprintf(buffer,"%d", gid);
 }
 
-int printInfo(char * top_directory, int device_number, char * directory, int * options) {
+
+int printInfo(char * parent_directory, char * directory_element, int * options, dev_t * device) {
 	int return_value = 0;
 	struct stat st;
-	char * full_path = fullPath(top_directory, directory);
+	char * full_path = fullPath(parent_directory, directory_element);
 	int status = lstat(full_path, &st);
-	if (status == 0){
-		if (device_number != -1 && st.st_dev != device_number && options[1] == 1){
-			fprintf(stderr, "note: not crossing mount point at %s\n", full_path);
-		}else if (options[0] != 1 || checkTime(st.st_mtime, options[2])){
-			char permission_string[11];
-			char user_buffer[1024];
-			char group_buffer[1024];
-			char size_string[20];
-			char * time_string = asctime(gmtime(&st.st_mtime));
-			time_string[strlen(time_string) - 1] = '\0';
-			resolveUid(st.st_uid, user_buffer);
-			resolveGid(st.st_gid, group_buffer);
-			switch(st.st_mode & S_IFMT) {
-				case S_IFREG:
-					return_value = 0;
-					permission_string[0] = '-';
-					break;
-				case S_IFDIR:
-					return_value = 1;
-					permission_string[0] = 'd';
-					break;
-			}
-			printf("%ld\t%ld\t%s\t%ld\t%s\t%s\t%s\t%s\t%s",
-						st.st_ino,
-						st.st_blocks/2,
-						permissionString(permission_string, st),
-						st.st_nlink,
-						user_buffer,
-						group_buffer,
-						sizeOrDeviceToString(st, size_string),
-						time_string,
-						full_path);
-			if ((st.st_mode & S_IFMT) == S_IFLNK) {
-				char symlink[1024];
-				readlink(directory, symlink, 1024);
-				printf(" -> %s", symlink);
-			}
-			printf("\n");
-		}
-	} else {
+	if (status != 0){
 		printError(full_path, "opening");
+		return 0;
 	}
+	if (*device != 0 && st.st_dev != *device && options[1] == 1){
+		fprintf(stderr, "note: not crossing mount point at %s\n", full_path);
+	}else if (options[0] != 1 || checkTime(st.st_mtime, options[2])){
+		char permission_string[11];
+		char user_buffer[1024];
+		char group_buffer[1024];
+		char size_string[20];
+		char time_string[1024];
+		struct tm * timelocal;
+		timelocal = localtime(&st.st_mtim.tv_sec);
+	       	strftime(time_string, 1024,"%a %b %d %T %Y", timelocal);	
+		resolveUid(st.st_uid, user_buffer);
+		resolveGid(st.st_gid, group_buffer);
+		switch(st.st_mode & S_IFMT) {
+			case S_IFREG:
+				permission_string[0] = '-';
+				break;
+			case S_IFCHR:
+				permission_string[0] = 'c';
+				break;
+			case S_IFLNK:
+				permission_string[0] = 'l';
+				break;
+			case S_IFSOCK:
+				permission_string[0] = 's';
+				break;
+			case S_IFBLK:
+				permission_string[0] = 'b';
+				break;
+			case S_IFDIR:
+				return_value = 1;
+				permission_string[0] = 'd';
+				break;
+			default: 
+				permission_string[0] = '-';
+				break;
+		}
+		printf("%ld\t%ld\t%s\t%ld\t%s\t%s\t%s\t%s\t%s",
+					st.st_ino,
+					st.st_blocks/2,
+					permissionString(permission_string, st),
+					st.st_nlink,
+					user_buffer,
+					group_buffer,
+					sizeOrDeviceToString(st, size_string),
+					time_string,
+					full_path);
+		if ((st.st_mode & S_IFMT) == S_IFLNK) {
+			char symlink[1024];
+			int response = readlink(full_path, symlink, 1024);
+			if (response < 0) {
+			       	printError(full_path, "resolving symlink"); 	
+				return 0;
+			}
+		       	symlink[response] = '\0';	
+			printf(" -> %s", symlink);
+		}
+		printf("\n");
+	}
+	if (*device == 0)
+		*device = st.st_dev;
 	free(full_path);
-	if (device_number == -1)
-		return st.st_dev;
 	return return_value;
 }
 
-int recurseDirectory(char * top_directory, int device_number, int * options) {
+
+int recurseDirectory(char * parent_directory, int * options, dev_t * device) {
 	DIR *d;
 	struct dirent * dir;
 	int type;
-	int len_top_directory = strlen(top_directory);
-	d = opendir(top_directory);
-	int temp;
-	if (d) { 
-		while ((dir = readdir(d)) != NULL) {
-			// call print function 
-			if (strcmp(dir->d_name, "..") != 0 && strcmp(dir->d_name, ".") !=0){
-				type = printInfo(top_directory, device_number, dir->d_name, options);
-				if (type == 1) {
-					fullPath(top_directory, dir->d_name);
-					recurseDirectory(top_directory, device_number, options);	
-					top_directory[len_top_directory] = '\0';
-				}
+	d = opendir(parent_directory);
+	if (!d) { 
+		printError(parent_directory, "opening dir");
+		return 1;
+	}
+	while ((dir = readdir(d)) != NULL) {
+		// call print function 
+		if (strcmp(dir->d_name, "..") != 0 && strcmp(dir->d_name, ".") !=0){
+			type = printInfo(parent_directory, dir->d_name, options, device);
+			if (type == 1) {
+				char * full_path = fullPath(parent_directory, dir->d_name);
+				recurseDirectory(full_path, options, device);	
+				free(full_path);
 			}
 		}
-		closedir(d);
-	} else {
-		printError(top_directory, "opening dir");
 	}
+	closedir(d);
 	return 1;
 }
 
@@ -156,7 +178,7 @@ int main(int argc, char **argv) {
 	// get the options
 	int options[3] = {0, 0, 0}; 	
 	int c;
-	char top_directory[1024];
+	char parent_directory[4096];
 	while ((c = getopt(argc, argv, "m:v")) != -1) {
 		switch(c) {
 			case 'm':
@@ -172,9 +194,14 @@ int main(int argc, char **argv) {
 				break;
 		}
 	}
-	strcpy(top_directory, argv[optind]);
+	if (optind == argc)
+		return 0;
+	strcpy(parent_directory, argv[optind]);
 	char end[1] = {'\0'};
-	int device_number = printInfo(top_directory, -1, end, options);
-	int response  = recurseDirectory(top_directory, device_number, options);
-	return response;
+	dev_t * device = malloc(sizeof(dev_t));
+	*device = 0;
+	printInfo(parent_directory,  end, options, device);
+	recurseDirectory(parent_directory, options, device);
+	free(device);
+	return 0;
 }
