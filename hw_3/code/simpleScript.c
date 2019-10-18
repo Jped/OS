@@ -115,7 +115,6 @@ int shell(FILE * input_file) {
 							
 
 						}
-						printf("command %s, argument list %s/n",command, argument_list[1]);
 						int resp = execvp(command, argument_list);
 						if (resp == -1){
 							printError("execing in child");
