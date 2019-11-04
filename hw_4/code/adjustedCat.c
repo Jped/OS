@@ -1,44 +1,23 @@
-#include <stdio.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <string.h>
 #include <ctype.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <setjmp.h>
+#include <stdio.h>
+#include <string.h>
+#include <signal.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #define MAX_ERROR_LENGTH 4096
 #define READ_BUFF_SIZE 4096
 
-int fileError(int type, char * filename, int permission) {
-	char action[6], perm[13];
-	switch(type) {
-		case 0:
-			strcpy(action, "open");
-			break;
-		case 1:
-			strcpy(action, "read");
-			break;
-		case 2:
-			strcpy(action, "writ");
-			break;
-		case 3:
-			strcpy(action, "close");
-			break;
-	}
-	switch(permission) {
-		case O_WRONLY|O_CREAT|O_TRUNC:
-			strcpy(perm, "write/create");
-			break;
-		case O_RDONLY:
-			strcpy(perm, "read");
-			break;
-		case -1:
-			strcpy(perm, "--");
-			break;
-	}
-	fprintf(stderr, "error while %sing file %s for %s: %s\n", action, filename, perm, strerror(errno));	
-	return 1;
-}
+
+int totalBytes = 0;
+int fileCount = 0;
+
+jmp_buf int_jb;
+
+
 
 int printError(char * action) { 
         fprintf(stderr, "error while %s: %s\n", action, strerror(errno));               
@@ -96,19 +75,31 @@ int more(int input_fd) {
 	return execvp("more", argument_list);
 }
 
+void moveToNext() {
+	fprintf(stderr, "\nNumber of files processed: %d \nNumber of bytes processed: %d \n", fileCount, totalBytes);
+	longjmp(int_jb, 1);
+}
+
 // Pattern is for grep and infiles is a list of inputed files
 int cat(int argc, char ** argv){
-    int totalBytes = 0;
-    int fileCount = 0;
     int bytesWritten, bytesRead;
     int pipe1[2];
     int pipe2[2];
     char * pattern = argv[1];
     char  * filename;
     char buff[READ_BUFF_SIZE];
+    char error_message[MAX_ERROR_LENGTH];
     int binary, fdInput;
+    struct sigaction sa;
+    sa.sa_handler = moveToNext;
+    sa.sa_flags = SA_NODEFER;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, NULL);
+
     // iterate through the files
     for (int i=2;i<argc;i++){
+	if (setjmp(int_jb) !=0)
+		continue;
 	fileCount++;
 	binary = 0;
 	if (pipe(pipe1)<0)
@@ -142,13 +133,16 @@ int cat(int argc, char ** argv){
 		return printError("closing the output pipe for more in parent");
 	fdInput = open(argv[i], O_RDONLY);
 	filename = argv[i];
-	if (fdInput<0)
-		return fileError(0, filename, O_RDONLY);
+	if (fdInput<0){
+		snprintf(error_message, MAX_ERROR_LENGTH, "while openening %s for read only", filename);
+		return printError(error_message);
+	}
 	while(1){
 		bytesRead = read(fdInput, buff, READ_BUFF_SIZE);
-		if (bytesRead == -1)
-			return fileError(1, filename, O_RDONLY);
-		else if (bytesRead == 0)
+		if (bytesRead == -1){
+			snprintf(error_message, MAX_ERROR_LENGTH, "while reading %s for read only", filename);
+			return printError(error_message);
+		}else if (bytesRead == 0)
 			break;
 		bytesWritten = write(pipe1[1], buff, bytesRead);
 		// deal with partial write
@@ -160,8 +154,10 @@ int cat(int argc, char ** argv){
 		totalBytes += bytesWritten;
 		if (!binary)
 			binary = checkBinary(buff, bytesWritten);
-		if (bytesWritten == -1 || (fdInput!=0 && bytesWritten == 0))
-			return fileError(2, filename, O_WRONLY|O_CREAT);
+		if (bytesWritten == -1 || (fdInput!=0 && bytesWritten == 0)){
+			snprintf(error_message, MAX_ERROR_LENGTH, "while writing to %s write/create", filename);
+			return printError(error_message);
+		}
 	}
 	if (binary)
 		fprintf(stderr, "\tWarning: this is a binary file\n");
