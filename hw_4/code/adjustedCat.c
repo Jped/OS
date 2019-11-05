@@ -24,20 +24,10 @@ int printError(char * action) {
 	return 1;
 }
 
-int checkBinary(char * buff, int size) {
-	for(int i=0; i<size; i++) {
-		if (!(isprint(buff[i]) || isspace(buff[i]))) {
-			return 1;
-		}
-	}
-	return 0;
-}
-
-
 int openAndDup(int fd, int new_fd){
 	if(dup2(fd, new_fd)<0) {
 		char error_message[MAX_ERROR_LENGTH];
-		snprintf(error_message, MAX_ERROR_LENGTH, "duping file: %d to new_fd: %d", fd, new_fd);
+		snprintf(error_message, MAX_ERROR_LENGTH, "duping file descriptor: %d to new file descriptor: %d", fd, new_fd);
 		printError(error_message);
 		return 1;
 	}
@@ -75,9 +65,13 @@ int more(int input_fd) {
 	return execvp("more", argument_list);
 }
 
-void moveToNext() {
+void moveToNextFileInterrupt() {
 	fprintf(stderr, "\nNumber of files processed: %d \nNumber of bytes processed: %d \n", fileCount, totalBytes);
 	longjmp(int_jb, 1);
+}
+
+void moveToNextFilePipe() {
+	longjmp(int_jb, 2);
 }
 
 // Pattern is for grep and infiles is a list of inputed files
@@ -89,19 +83,21 @@ int cat(int argc, char ** argv){
     char  * filename;
     char buff[READ_BUFF_SIZE];
     char error_message[MAX_ERROR_LENGTH];
-    int binary, fdInput;
-    struct sigaction sa;
-    sa.sa_handler = moveToNext;
-    sa.sa_flags = SA_NODEFER;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGINT, &sa, NULL);
-
+    int fdInput;
+    struct sigaction saInt;
+    struct sigaction saPipe;
+    signal(SIGCHLD, SIG_IGN);
+    saInt.sa_handler = moveToNextFileInterrupt;
+    saInt.sa_flags = SA_NODEFER;
+    sigemptyset(&saInt.sa_mask);
+    sigaction(SIGINT, &saInt, NULL);
+    saPipe.sa_handler = moveToNextFilePipe;
+    saPipe.sa_flags = SA_NODEFER;
+    sigaction(SIGPIPE, &saPipe, NULL);
+    
     // iterate through the files
     for (int i=2;i<argc;i++){
-	if (setjmp(int_jb) !=0)
-		continue;
 	fileCount++;
-	binary = 0;
 	if (pipe(pipe1)<0)
 		return printError("creating first pipe");
 	if (pipe(pipe2)<0)
@@ -137,6 +133,14 @@ int cat(int argc, char ** argv){
 		snprintf(error_message, MAX_ERROR_LENGTH, "while openening %s for read only", filename);
 		return printError(error_message);
 	}
+	if (setjmp(int_jb)!=0){
+		// we are in parent and received a sigint, close input
+		// In the case where the file is less than pipe buffer size
+		// this close is unecissary
+		close(fdInput);
+		close(pipe1[1]);
+		continue;
+	}
 	while(1){
 		bytesRead = read(fdInput, buff, READ_BUFF_SIZE);
 		if (bytesRead == -1){
@@ -152,16 +156,11 @@ int cat(int argc, char ** argv){
 			bytesWritten  = write(pipe1[1], buff + bytesWritten, bytesRead);
 		}
 		totalBytes += bytesWritten;
-		if (!binary)
-			binary = checkBinary(buff, bytesWritten);
 		if (bytesWritten == -1 || (fdInput!=0 && bytesWritten == 0)){
-			snprintf(error_message, MAX_ERROR_LENGTH, "while writing to %s write/create", filename);
+			snprintf(error_message, MAX_ERROR_LENGTH, "while writing to pipe from %s", filename);
 			return printError(error_message);
 		}
 	}
-	if (binary)
-		fprintf(stderr, "\tWarning: this is a binary file\n");
-	
 	if (close(fdInput)<0)
 		return printError("closing input file");
     	if(close(pipe1[1])<0)
@@ -169,7 +168,9 @@ int cat(int argc, char ** argv){
     	// wait on both children to close em up.
 	wait(NULL);
 	wait(NULL);	
+    	
     }
+    return 0;
 }
 
 int main (int argc, char **argv) {
