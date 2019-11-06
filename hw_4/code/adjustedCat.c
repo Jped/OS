@@ -1,3 +1,9 @@
+/******************************************
+ * 		Jonathan Pedoeem	  *
+ * 	     Coding Homework Number 4	  *
+ *          Operating Systems Fall 2019	  *
+ * 	        Proffesor J. Hakner	  *
+ * ***************************************/
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -41,11 +47,11 @@ int openAndDup(int fd, int new_fd){
 }
 
 
-int grep(char * pattern, int * pipe1, int * pipe2){
+int grep(char * pattern, int input_fd, int output_fd){
 	// do the dup
-	if(openAndDup(pipe1[0], 0)!=0)
+	if(openAndDup(input_fd, 0)!=0)
 		return 1;
-	if(openAndDup(pipe2[1], 1)!=0)
+	if(openAndDup(output_fd, 1)!=0)
 		return 1;
 	char * argument_list[3];
 	char * program_name = "grep";
@@ -76,14 +82,12 @@ void moveToNextFilePipe() {
 
 // Pattern is for grep and infiles is a list of inputed files
 int cat(int argc, char ** argv){
-    int bytesWritten, bytesRead;
+    int bytesWritten, bytesRead, fdInput;
     int pipe1[2];
     int pipe2[2];
-    char * pattern = argv[1];
     char  * filename;
     char buff[READ_BUFF_SIZE];
     char error_message[MAX_ERROR_LENGTH];
-    int fdInput;
     struct sigaction saInt;
     struct sigaction saPipe;
     signal(SIGCHLD, SIG_IGN);
@@ -102,6 +106,7 @@ int cat(int argc, char ** argv){
 		return printError("creating first pipe");
 	if (pipe(pipe2)<0)
 		return printError("creating second pipe");
+	// fork into grep child
 	switch(fork()){
 		case -1:
 			return printError("forking into grep process");
@@ -109,19 +114,20 @@ int cat(int argc, char ** argv){
 			// now that we are in the grep child lets close
 			// all the non relevant fds
 			if(close(pipe1[1])<0 || close(pipe2[0])<0)
-				return printError("closing dangling file descriptors");
-			return grep(pattern, pipe1, pipe2);
+				return printError("closing dangling file descriptors in grep child");
+			return grep(argv[1], pipe1[0], pipe2[1]);
 	}
-	// no one needs pipe1[0] and pipe2[1] so will close
+	// no one needs pipe1[0] and pipe2[1] anymore so will close
 	if(close(pipe1[0])<0 || close(pipe2[1])<0)
 		return printError("closing unnecessary grep pipes");
+	// fork into more child
 	switch(fork()){
 		case -1:
 			return printError("forking into more process");
 		case 0:
 			// close non relevant fds
 			if(close(pipe1[1])<0)
-				return printError("closing dangling file descriptors in more");
+				return printError("closing dangling file descriptors in more child");
 			return more(pipe2[0]);		
 	}
 	// close pipe2[0]
@@ -134,7 +140,6 @@ int cat(int argc, char ** argv){
 		return printError(error_message);
 	}
 	if (setjmp(int_jb)!=0){
-		// we are in parent and received a sigint, close input
 		// In the case where the file is less than pipe buffer size
 		// this close is unecissary
 		close(fdInput);
@@ -176,7 +181,7 @@ int cat(int argc, char ** argv){
 int main (int argc, char **argv) {
     // make sure enough arguments are passed
     if (argc < 3) {
-	fprintf(stderr, "You only provided %d arguments, atleast 3 have to be passed.\nUsage for this script is 'catgrepmore pattern infile1 [...infile2...]'\n", argc);
+	fprintf(stderr, "You only provided %d arguments, atleast 3 have to be passed.\nUsage for this script is 'programname pattern infile1 [...infile2...]'\n", argc);
     	return 1;
     }
     return cat(argc, argv);
